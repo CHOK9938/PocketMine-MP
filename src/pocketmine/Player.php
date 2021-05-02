@@ -2064,10 +2064,6 @@ class Player extends Human implements CommandSender, ChunkLoader, IPlayer{
 				$this->server->getLogger()->error($this->getName() . " should have an XUID, but none found");
 			}
 
-			if($this->server->requiresAuthentication() and $this->kick("disconnectionScreen.notAuthenticated", false)){ //use kick to allow plugins to cancel this
-				return;
-			}
-
 			$this->server->getLogger()->debug($this->getName() . " is NOT logged into Xbox Live");
 		}else{
 			$this->server->getLogger()->debug($this->getName() . " is logged into Xbox Live");
@@ -2077,92 +2073,6 @@ class Player extends Human implements CommandSender, ChunkLoader, IPlayer{
 		//TODO: encryption
 
 		$this->processLogin();
-	}
-
-	/**
-	 * @return void
-	 */
-	protected function processLogin(){
-		$checkXUID = (bool) $this->server->getProperty("player.verify-xuid", true);
-		$kickForXUIDMismatch = function(string $xuid) use ($checkXUID) : bool{
-			if($checkXUID && $this->xuid !== $xuid){
-				if($this->kick("XUID does not match (possible impersonation attempt)", false)){
-					//TODO: Longer term, we should be identifying playerdata using something more reliable, like XUID or UUID.
-					//However, that would be a very disruptive change, so this will serve as a stopgap for now.
-					//Side note: this will also prevent offline players hijacking XBL playerdata on online servers, since their
-					//XUID will always be empty.
-					return true;
-				}
-				$this->server->getLogger()->debug("XUID mismatch for " . $this->getName() . ", but plugin cancelled event allowing them to join anyway");
-			}
-			return false;
-		};
-
-		foreach($this->server->getLoggedInPlayers() as $p){
-			if($p !== $this and ($p->iusername === $this->iusername or $this->getUniqueId()->equals($p->getUniqueId()))){
-				if($kickForXUIDMismatch($p->getXuid())){
-					return;
-				}
-				if(!$p->kick("logged in from another location")){
-					$this->close($this->getLeaveMessage(), "Logged in from another location");
-					return;
-				}
-			}
-		}
-
-		$this->namedtag = $this->server->getOfflinePlayerData($this->username);
-		if($checkXUID){
-			$recordedXUID = $this->namedtag->getTag("LastKnownXUID");
-			if(!($recordedXUID instanceof StringTag)){
-				$this->server->getLogger()->debug("No previous XUID recorded for " . $this->getName() . ", no choice but to trust this player");
-			}elseif(!$kickForXUIDMismatch($recordedXUID->getValue())){
-				$this->server->getLogger()->debug("XUID match for " . $this->getName());
-			}
-		}
-
-		$this->playedBefore = ($this->getLastPlayed() - $this->getFirstPlayed()) > 1; // microtime(true) - microtime(true) may have less than one millisecond difference
-		$this->namedtag->setString("NameTag", $this->username);
-
-		$this->gamemode = $this->namedtag->getInt("playerGameType", self::SURVIVAL) & 0x03;
-		if($this->server->getForceGamemode()){
-			$this->gamemode = $this->server->getGamemode();
-			$this->namedtag->setInt("playerGameType", $this->gamemode);
-		}
-
-		$this->allowFlight = $this->isCreative();
-		$this->keepMovement = $this->isSpectator() || $this->allowMovementCheats();
-
-		if(($level = $this->server->getLevelByName($this->namedtag->getString("Level", "", true))) === null){
-			$this->setLevel($this->server->getDefaultLevel());
-			$this->namedtag->setString("Level", $this->level->getFolderName());
-			$spawnLocation = $this->level->getSafeSpawn();
-			$this->namedtag->setTag(new ListTag("Pos", [
-				new DoubleTag("", $spawnLocation->x),
-				new DoubleTag("", $spawnLocation->y),
-				new DoubleTag("", $spawnLocation->z)
-			]));
-		}else{
-			$this->setLevel($level);
-		}
-
-		$this->achievements = [];
-
-		$achievements = $this->namedtag->getCompoundTag("Achievements") ?? [];
-		/** @var ByteTag $achievement */
-		foreach($achievements as $achievement){
-			$this->achievements[$achievement->getName()] = $achievement->getValue() !== 0;
-		}
-
-		$this->sendPlayStatus(PlayStatusPacket::LOGIN_SUCCESS);
-
-		$this->loggedIn = true;
-		$this->server->onPlayerLogin($this);
-
-		$pk = new ResourcePacksInfoPacket();
-		$manager = $this->server->getResourcePackManager();
-		$pk->resourcePackEntries = $manager->getResourceStack();
-		$pk->mustAccept = $manager->resourcePacksRequired();
-		$this->dataPacket($pk);
 	}
 
 	public function handleResourcePackClientResponse(ResourcePackClientResponsePacket $packet) : bool{
